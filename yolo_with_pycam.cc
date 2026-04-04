@@ -112,12 +112,15 @@ void inference_thread_func(tflite::Interpreter* interpreter, bool tpu_mode) {
         if (local_frame.empty()) continue;
 
         // Preprocessing
+        TfLiteTensor* input_tensor_ptr = interpreter->tensor(interpreter->inputs()[0]);
+        int input_height = input_tensor_ptr->dims->data[1];
+        int input_width  = input_tensor_ptr->dims->data[2];
+        int channels     = input_tensor_ptr->dims->data[3];
+        int total_pixels = input_height * input_width * channels;
+
         cv::Mat processed_image;
         cv::cvtColor(local_frame, processed_image, cv::COLOR_BGR2RGB);
-        cv::resize(processed_image, processed_image, cv::Size(300, 300)); // YOLOv3-tiny often uses 416, but 300 might work depending on model
-
-        TfLiteTensor* input_tensor_ptr = interpreter->tensor(interpreter->inputs()[0]);
-        int total_pixels = input_tensor_ptr->dims->data[1] * input_tensor_ptr->dims->data[2] * input_tensor_ptr->dims->data[3];
+        cv::resize(processed_image, processed_image, cv::Size(input_width, input_height)); 
 
         if (tpu_mode) {
             if (input_tensor_ptr->type == kTfLiteUInt8) {

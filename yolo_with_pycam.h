@@ -13,7 +13,12 @@ struct Detection {
 
 // Thread-safe output parsing (using yolo_parser.h logic)
 inline std::vector<Detection> yolo_parse_detections(TfLiteTensor* cls_tensor, TfLiteTensor* loc_tensor, int img_width, int img_height){
-  static yolo::YOLO_Parser parser; // Thread-safe as result boxes are returned
+  static yolo::YOLO_Parser parser;
+  
+  // Clear static states to prevent results from previous frames from accumulating
+  yolo::YOLO_Parser::real_bbox_cls_index_vector.clear();
+  yolo::YOLO_Parser::real_bbox_loc_vector.clear();
+  yolo::YOLO_Parser::result_boxes.clear();
   
   std::vector<int> real_bbox_index_vector;
   std::vector<std::vector<float>> cls_vector;
