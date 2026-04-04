@@ -44,12 +44,6 @@ limitations under the License.
 using namespace std;
 
 // Shared data for threading
-struct Detection {
-    int class_id;
-    float score;
-    cv::Rect box;
-};
-
 std::mutex frame_mutex;
 cv::Mat shared_frame;
 std::atomic<bool> new_frame_available{false};
@@ -95,50 +89,6 @@ bool setupEdgeTpu(tflite::Interpreter* interpreter) {
     return true;
 }
 
-// (새로운) 모델 출력 파싱 함수 (데이터만 추출)
-std::vector<Detection> parse_detections(tflite::Interpreter* interpreter, int img_width, int img_height) {
-    std::vector<Detection> detections;
-    
-    // 1. 모델에서 4개의 출력 텐서 데이터 가져오기
-    float* boxes   = interpreter->tensor(interpreter->outputs()[0])->data.f; // [1, 20, 4] 박스 좌표
-    float* classes = interpreter->tensor(interpreter->outputs()[1])->data.f; // [1, 20] 클래스 ID
-    float* scores  = interpreter->tensor(interpreter->outputs()[2])->data.f; // [1, 20] 신뢰도 점수
-    float  count   = interpreter->tensor(interpreter->outputs()[3])->data.f[0]; // [1] 감지된 객체 수
-
-    // 2. 감지된 객체 개수만큼 반복하며 데이터 추출
-    for (int i = 0; i < (int)count; ++i) {
-        if (scores[i] >= 0.5f) {
-            int ymin = (int)(boxes[i * 4 + 0] * img_height);
-            int xmin = (int)(boxes[i * 4 + 1] * img_width);
-            int ymax = (int)(boxes[i * 4 + 2] * img_height);
-            int xmax = (int)(boxes[i * 4 + 3] * img_width);
-
-            ymin = std::max(0, ymin);
-            xmin = std::max(0, xmin);
-            ymax = std::min(img_height - 1, ymax);
-            xmax = std::min(img_width - 1, xmax);
-
-            detections.push_back({(int)classes[i], scores[i], cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin)});
-        }
-    }
-    return detections;
-}
-
-// 추출된 결과를 화면에 그리는 함수 (Main Thread에서 호출)
-void draw_detections(cv::Mat& image, const std::vector<Detection>& detections) {
-    for (const auto& det : detections) {
-        // 초록색 바운딩 박스 그리기
-        cv::rectangle(image, det.box, cv::Scalar(0, 255, 0), 2);
-
-        // 텍스트 (클래스 ID와 확률) 작성
-        char label[256];
-        sprintf(label, "ID: %d, Score: %.2f", det.class_id, det.score);
-        
-        cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 3); // 그림자
-        cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1); // 실제 글씨
-    }
-}
-
 void inference_thread_func(tflite::Interpreter* interpreter, bool tpu_mode) {
     while (running) {
         if (!new_frame_available) {
@@ -158,13 +108,10 @@ void inference_thread_func(tflite::Interpreter* interpreter, bool tpu_mode) {
         // Preprocessing
         cv::Mat processed_image;
         cv::cvtColor(local_frame, processed_image, cv::COLOR_BGR2RGB);
-        cv::resize(processed_image, processed_image, cv::Size(300, 300));
+        cv::resize(processed_image, processed_image, cv::Size(300, 300)); // YOLOv3-tiny often uses 416, but 300 might work depending on model
 
         TfLiteTensor* input_tensor_ptr = interpreter->tensor(interpreter->inputs()[0]);
-        int input_width = input_tensor_ptr->dims->data[2];
-        int input_height = input_tensor_ptr->dims->data[1];
-        int channels = input_tensor_ptr->dims->data[3];
-        int total_pixels = input_width * input_height * channels;
+        int total_pixels = input_tensor_ptr->dims->data[1] * input_tensor_ptr->dims->data[2] * input_tensor_ptr->dims->data[3];
 
         if (tpu_mode) {
             if (input_tensor_ptr->type == kTfLiteUInt8) {
@@ -183,8 +130,12 @@ void inference_thread_func(tflite::Interpreter* interpreter, bool tpu_mode) {
 
         // Run inference
         if (interpreter->Invoke() == kTfLiteOk) {
-            // 헤더의 스레드 안전 파싱 함수 사용
-            auto detections = parse_detections_thread_safe(interpreter, local_frame.cols, local_frame.rows);
+            // YOLOv3: Cls tensor (0) and Loc tensor (1)
+            auto detections = yolo_parse_detections(
+                interpreter->tensor(interpreter->outputs()[0]), 
+                interpreter->tensor(interpreter->outputs()[1]), 
+                local_frame.cols, local_frame.rows
+            );
             
             std::lock_guard<std::mutex> lock(results_mutex);
             shared_results = std::move(detections);
