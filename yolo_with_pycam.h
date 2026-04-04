@@ -11,85 +11,36 @@ struct Detection {
     cv::Rect box;
 };
 
-// Helper to get float data from a tensor (handles dequantization)
-inline std::vector<float> get_tensor_data_as_float(TfLiteTensor* tensor) {
-    int size = 1;
-    for (int i = 0; i < tensor->dims->size; i++) size *= tensor->dims->data[i];
+// Thread-safe output parsing (using TFLite PostProcess Op)
+inline std::vector<Detection> parse_detections_thread_safe(tflite::Interpreter* interpreter, int img_width, int img_height) {
+    std::vector<Detection> detections;
     
-    std::vector<float> data(size);
-    if (tensor->type == kTfLiteFloat32) {
-        float* raw = (float*)tensor->data.data;
-        std::copy(raw, raw + size, data.begin());
-    } else if (tensor->type == kTfLiteUInt8) {
-        uint8_t* raw = (uint8_t*)tensor->data.data;
-        for (int i = 0; i < size; i++) {
-            data[i] = (static_cast<float>(raw[i]) - tensor->params.zero_point) * tensor->params.scale;
-        }
-    } else if (tensor->type == kTfLiteInt8) {
-        int8_t* raw = (int8_t*)tensor->data.data;
-        for (int i = 0; i < size; i++) {
-            data[i] = (static_cast<float>(raw[i]) - tensor->params.zero_point) * tensor->params.scale;
+    // Check if enough outputs exist
+    if (interpreter->outputs().size() < 4) return detections;
+    
+    // SSD-style models (regardless of name) often use the following 4 output tensors:
+    // Output 0: Locations, Output 1: Classes, Output 2: Scores, Output 3: Count
+    float* boxes   = interpreter->tensor(interpreter->outputs()[0])->data.f;
+    float* classes = interpreter->tensor(interpreter->outputs()[1])->data.f;
+    float* scores  = interpreter->tensor(interpreter->outputs()[2])->data.f;
+    float  count   = interpreter->tensor(interpreter->outputs()[3])->data.f[0];
+
+    for (int i = 0; i < (int)count; ++i) {
+        if (scores[i] >= 0.5f) {
+            int ymin = (int)(boxes[i * 4 + 0] * img_height);
+            int xmin = (int)(boxes[i * 4 + 1] * img_width);
+            int ymax = (int)(boxes[i * 4 + 2] * img_height);
+            int xmax = (int)(boxes[i * 4 + 3] * img_width);
+
+            ymin = std::max(0, ymin);
+            xmin = std::max(0, xmin);
+            ymax = std::min(img_height - 1, ymax);
+            xmax = std::min(img_width - 1, xmax);
+
+            detections.push_back({(int)classes[i], scores[i], cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin)});
         }
     }
-    return data;
-}
-
-// Thread-safe output parsing (using yolo_parser.h logic)
-inline std::vector<Detection> yolo_parse_detections(TfLiteTensor* cls_tensor, TfLiteTensor* loc_tensor, int img_width, int img_height){
-  static yolo::YOLO_Parser parser;
-  
-  // Clear static states
-  yolo::YOLO_Parser::real_bbox_cls_index_vector.clear();
-  yolo::YOLO_Parser::real_bbox_loc_vector.clear();
-  yolo::YOLO_Parser::result_boxes.clear();
-  
-  // (임시) YOLO_Parser의 로직이 내부적으로 TfLiteTensor의 data.data를 직접 float*로 캐스팅하여 사용하므로, 
-  // 만약 텐서가 양자화(UInt8/Int8)되어 있다면 강제로 Float 텐서 구조를 흉내내거나 로직을 우회해야 합니다.
-  // 여기서는 안전하게 YOLO_Parser를 거치지 않고 직접 파싱하는 것이 더 안정적일 수 있으나, 
-  // 일단 YOLO_Parser가 기대하는 float* 데이터를 위해 임시 버퍼를 사용하는 방식을 시도합니다.
-  
-  // 하지만 YOLO_Parser 코드를 보면 TfLiteTensor*를 인자로 받아 내부에서 다시 캐스팅하므로, 
-  // 텐서 데이터 자체를 Float으로 변환한 "가짜" 텐서를 넘기는 것은 어렵습니다.
-  
-  // 따라서, 텐서 타입이 Float인지 먼저 확인하고 아니라면 경고를 출력합니다.
-  if (cls_tensor->type != kTfLiteFloat32 || loc_tensor->type != kTfLiteFloat32) {
-      printf("\033[1;31mWarning: Model outputs are quantized (Type %d, %d). YOLO_Parser may crash!\033[0m\n", 
-             cls_tensor->type, loc_tensor->type);
-  }
-
-  std::vector<int> real_bbox_index_vector;
-  std::vector<std::vector<float>> cls_vector;
-  std::vector<std::vector<int>> loc_vector;
-  
-  // Make classification vector (내부에서 (float*)로 캐스팅함)
-  parser.make_real_bbox_cls_vector(cls_tensor, real_bbox_index_vector, cls_vector);
-  
-  std::vector<int> cls_index_vector = parser.get_cls_index(cls_vector); 
-  
-  // Make localization vector (내부에서 (float*)로 캐스팅함)
-  parser.make_real_bbox_loc_vector(loc_tensor, real_bbox_index_vector, loc_vector);
-  
-  // NMS
-  float iou_threshold = 0.5;
-  parser.PerformNMSUsingResults(real_bbox_index_vector, cls_vector, loc_vector, iou_threshold, cls_index_vector);
-  
-  // Convert parser results to Detection struct
-  std::vector<Detection> detections;
-  for (const auto& bbox : yolo::YOLO_Parser::result_boxes) {
-      float scale_x = (float)img_width / IMG_size;
-      float scale_y = (float)img_height / IMG_size;
-      detections.push_back({
-          bbox.class_id, 
-          bbox.score, 
-          cv::Rect(
-              static_cast<int>(bbox.left * scale_x),
-              static_cast<int>(bbox.top * scale_y),
-              static_cast<int>((bbox.right - bbox.left) * scale_x),
-              static_cast<int>((bbox.bottom - bbox.top) * scale_y)
-          )
-      });
-  }
-  return detections;
+    return detections;
 }
 
 // Current COCO label dictionary
@@ -126,7 +77,7 @@ inline void yolo_output_visualize(cv::Mat& image, const std::vector<Detection>& 
 
         char label[256];
         std::string class_name = labelDict.count(det.class_id) ? labelDict[det.class_id] : std::to_string(det.class_id);
-        sprintf(label, "%s: %.2f", class_name.c_str(), det.score);
+        sprintf(label, "%s, Score: %.2f", class_name.c_str(), det.score);
         
         cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 3);
         cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);

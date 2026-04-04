@@ -139,12 +139,8 @@ void inference_thread_func(tflite::Interpreter* interpreter, bool tpu_mode) {
 
         // Run inference
         if (interpreter->Invoke() == kTfLiteOk) {
-            // YOLOv3: Cls tensor (0) and Loc tensor (1)
-            auto detections = yolo_parse_detections(
-                interpreter->tensor(interpreter->outputs()[0]), 
-                interpreter->tensor(interpreter->outputs()[1]), 
-                local_frame.cols, local_frame.rows
-            );
+            // SSD-style parsing (4-tensor output: Boxes, Classes, Scores, Count)
+            auto detections = parse_detections_thread_safe(interpreter, local_frame.cols, local_frame.rows);
             
             std::lock_guard<std::mutex> lock(results_mutex);
             shared_results = std::move(detections);
