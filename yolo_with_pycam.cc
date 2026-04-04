@@ -236,12 +236,28 @@ int main(int argc, char* argv[]) {
     // (10) Display (Fixed to 300x300)
     cv::Mat display_image;
     cv::resize(image, display_image, cv::Size(300, 300));
-    cv::imshow("Yolo example with Pycam", display_image);
+    
+    // 화면 출력이 안 될 경우를 대비해 파일로 저장
+    cv::imwrite("result.jpg", display_image);
+    
+    // DISPLAY 환경 변수가 있는 경우에만 imshow 시도
+    if (getenv("DISPLAY") != NULL) {
+        try {
+            cv::imshow("Yolo example with Pycam", display_image);
+        } catch (const cv::Exception& e) {
+            // imshow 실패해도 계속 진행
+        }
+    }
 
-    char key = cv::waitKey(1);
+    char key = (getenv("DISPLAY") != NULL) ? cv::waitKey(1) : ' ';
     if (key == 'q') {
         running = false;
         break;
+    }
+    
+    // GUI가 없는 환경에서는 CPU 점유율을 위해 약간의 대기 추가
+    if (getenv("DISPLAY") == NULL) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
     }
   }
 
