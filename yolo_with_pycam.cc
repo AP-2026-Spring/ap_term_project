@@ -28,7 +28,6 @@ limitations under the License.
 #include "camera_thread.h"
 #include "inference_thread.h"
 #include "polling_thread.h"
-#include "yolo_with_pycam.h"
 
 #define TFLITE_MINIMAL_CHECK(x)                               \
   if (!(x)) {                                                 \
