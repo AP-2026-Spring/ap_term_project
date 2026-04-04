@@ -237,15 +237,12 @@ int main(int argc, char* argv[]) {
     cv::Mat display_image;
     cv::resize(image, display_image, cv::Size(300, 300));
     
-    // 화면 출력이 안 될 경우를 대비해 파일로 저장
-    cv::imwrite("result.jpg", display_image);
-    
     // DISPLAY 환경 변수가 있는 경우에만 imshow 시도
     if (getenv("DISPLAY") != NULL) {
         try {
             cv::imshow("Yolo example with Pycam", display_image);
         } catch (const cv::Exception& e) {
-            // imshow 실패해도 계속 진행
+            // imshow 실패 시 무시
         }
     }
 
@@ -255,9 +252,9 @@ int main(int argc, char* argv[]) {
         break;
     }
     
-    // GUI가 없는 환경에서는 CPU 점유율을 위해 약간의 대기 추가
+    // GUI가 없는 환경에서는 CPU 소모를 줄이기 위해 짧은 대기
     if (getenv("DISPLAY") == NULL) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
   }
 
