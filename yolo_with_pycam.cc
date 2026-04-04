@@ -43,11 +43,11 @@ limitations under the License.
 
 using namespace std;
 
-// Static member definitions for yolo::YOLO_Parser
-std::vector<yolo::YOLO_Parser::BoundingBox> yolo::YOLO_Parser::result_boxes;
+// Static member definitions for yolo::YOLO_Parser (Storage allocation)
 std::vector<std::vector<float>> yolo::YOLO_Parser::real_bbox_cls_vector; 
 std::vector<int> yolo::YOLO_Parser::real_bbox_cls_index_vector;
 std::vector<std::vector<int>> yolo::YOLO_Parser::real_bbox_loc_vector;
+std::vector<yolo::YOLO_Parser::BoundingBox> yolo::YOLO_Parser::result_boxes;
 
 // Shared data for threading
 std::mutex frame_mutex;
