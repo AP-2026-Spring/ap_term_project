@@ -36,8 +36,28 @@ limitations under the License.
 // the minimal build tool.
 //
 // Usage: ./minimal_yolo <tflite model>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
 
 using namespace std;
+
+// Shared data for threading
+struct Detection {
+    int class_id;
+    float score;
+    cv::Rect box;
+};
+
+std::mutex frame_mutex;
+cv::Mat shared_frame;
+std::atomic<bool> new_frame_available{false};
+
+std::mutex results_mutex;
+std::vector<Detection> shared_results;
+
+std::atomic<bool> running{true};
 
 #define TFLITE_MINIMAL_CHECK(x)                              \
   if (!(x)) {                                                \
@@ -75,52 +95,99 @@ bool setupEdgeTpu(tflite::Interpreter* interpreter) {
     return true;
 }
 
-// (새로운) 모델 출력 파싱 및 바운딩 박스 그리기 함수
-void parse_and_visualize_postprocess(tflite::Interpreter* interpreter, cv::Mat& image) {
+// (새로운) 모델 출력 파싱 함수 (데이터만 추출)
+std::vector<Detection> parse_detections(tflite::Interpreter* interpreter, int img_width, int img_height) {
+    std::vector<Detection> detections;
+    
     // 1. 모델에서 4개의 출력 텐서 데이터 가져오기
     float* boxes   = interpreter->tensor(interpreter->outputs()[0])->data.f; // [1, 20, 4] 박스 좌표
     float* classes = interpreter->tensor(interpreter->outputs()[1])->data.f; // [1, 20] 클래스 ID
     float* scores  = interpreter->tensor(interpreter->outputs()[2])->data.f; // [1, 20] 신뢰도 점수
     float  count   = interpreter->tensor(interpreter->outputs()[3])->data.f[0]; // [1] 감지된 객체 수
 
-// [디버깅] 모델이 도대체 무슨 값을 뱉고 있는지 터미널에 출력!
-    printf("Detected Count: %f\n", count);
-    if (count > 0) {
-        printf("Top 1 Score: %f (Class: %d)\n", scores[0], (int)classes[0]);
-        printf("Top 1 Box: [ymin:%.2f, xmin:%.2f, ymax:%.2f, xmax:%.2f]\n", 
-               boxes[0], boxes[1], boxes[2], boxes[3]);
-    }
-
-    int img_width = image.cols;
-    int img_height = image.rows;
-
-    // 2. 감지된 객체 개수만큼 반복하며 화면에 그리기
+    // 2. 감지된 객체 개수만큼 반복하며 데이터 추출
     for (int i = 0; i < (int)count; ++i) {
-        // 신뢰도 50% 이상인 객체만 표시 (필요시 0.3 등으로 조절)
         if (scores[i] >= 0.5f) {
-            // 좌표 비율(0.0~1.0)을 실제 이미지 픽셀 크기로 변환
-            // 주의: TFLite PostProcess는 ymin, xmin, ymax, xmax 순서로 뱉습니다.
             int ymin = (int)(boxes[i * 4 + 0] * img_height);
             int xmin = (int)(boxes[i * 4 + 1] * img_width);
             int ymax = (int)(boxes[i * 4 + 2] * img_height);
             int xmax = (int)(boxes[i * 4 + 3] * img_width);
 
-            // 박스가 화면 밖으로 튀어나가지 않게 안전장치(Clamping)
             ymin = std::max(0, ymin);
             xmin = std::max(0, xmin);
             ymax = std::min(img_height - 1, ymax);
             xmax = std::min(img_width - 1, xmax);
 
-            // 초록색 바운딩 박스 그리기
-            cv::rectangle(image, cv::Point(xmin, ymin), cv::Point(xmax, ymax), cv::Scalar(0, 255, 0), 2);
+            detections.push_back({(int)classes[i], scores[i], cv::Rect(xmin, ymin, xmax - xmin, ymax - ymin)});
+        }
+    }
+    return detections;
+}
 
-            // 텍스트 (클래스 ID와 확률) 작성
-            char label[256];
-            sprintf(label, "ID: %d, Score: %.2f", (int)classes[i], scores[i]);
+// 추출된 결과를 화면에 그리는 함수 (Main Thread에서 호출)
+void draw_detections(cv::Mat& image, const std::vector<Detection>& detections) {
+    for (const auto& det : detections) {
+        // 초록색 바운딩 박스 그리기
+        cv::rectangle(image, det.box, cv::Scalar(0, 255, 0), 2);
+
+        // 텍스트 (클래스 ID와 확률) 작성
+        char label[256];
+        sprintf(label, "ID: %d, Score: %.2f", det.class_id, det.score);
+        
+        cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 3); // 그림자
+        cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1); // 실제 글씨
+    }
+}
+
+void inference_thread_func(tflite::Interpreter* interpreter, bool tpu_mode) {
+    while (running) {
+        if (!new_frame_available) {
+            std::this_thread::yield();
+            continue;
+        }
+
+        cv::Mat local_frame;
+        {
+            std::lock_guard<std::mutex> lock(frame_mutex);
+            local_frame = shared_frame.clone();
+            new_frame_available = false;
+        }
+
+        if (local_frame.empty()) continue;
+
+        // Preprocessing
+        cv::Mat processed_image;
+        cv::cvtColor(local_frame, processed_image, cv::COLOR_BGR2RGB);
+        cv::resize(processed_image, processed_image, cv::Size(300, 300));
+
+        TfLiteTensor* input_tensor_ptr = interpreter->tensor(interpreter->inputs()[0]);
+        int input_width = input_tensor_ptr->dims->data[2];
+        int input_height = input_tensor_ptr->dims->data[1];
+        int channels = input_tensor_ptr->dims->data[3];
+        int total_pixels = input_width * input_height * channels;
+
+        if (tpu_mode) {
+            if (input_tensor_ptr->type == kTfLiteUInt8) {
+                uint8_t* input_tensor = interpreter->typed_input_tensor<uint8_t>(0);
+                std::memcpy(input_tensor, processed_image.data, total_pixels);
+            } else if (input_tensor_ptr->type == kTfLiteInt8) {
+                int8_t* input_tensor = interpreter->typed_input_tensor<int8_t>(0);
+                for (int i = 0; i < total_pixels; ++i)
+                    input_tensor[i] = (int8_t)((int)processed_image.data[i] - 128); 
+            }
+        } else {
+            float* input_tensor = interpreter->typed_input_tensor<float>(0);
+            for (int i = 0; i < total_pixels; ++i)
+                input_tensor[i] = (float)processed_image.data[i] / 255.0f;
+        }
+
+        // Run inference
+        if (interpreter->Invoke() == kTfLiteOk) {
+            // 헤더의 스레드 안전 파싱 함수 사용
+            auto detections = parse_detections_thread_safe(interpreter, local_frame.cols, local_frame.rows);
             
-            // 글씨 배경에 살짝 검은색 그림자를 주면 더 잘 보입니다 (선택 사항)
-            cv::putText(image, label, cv::Point(xmin, ymin - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 3); // 그림자
-            cv::putText(image, label, cv::Point(xmin, ymin - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1); // 실제 글씨
+            std::lock_guard<std::mutex> lock(results_mutex);
+            shared_results = std::move(detections);
         }
     }
 }
@@ -171,72 +238,48 @@ int main(int argc, char* argv[]) {
   TFLITE_MINIMAL_CHECK(interpreter->AllocateTensors() == kTfLiteOk);
   printf("=== Pre-invoke Interpreter State ===\n");
 
+  // (5.5) Start Inference Thread
+  std::thread inference_thread(inference_thread_func, interpreter.get(), tpu_mode);
+
   while (true) {
-    // (6) Load image from Pycam
+    // (6) Load image from Camera
     cv::Mat image;
-//     camera.grab();
-//     camera.retrieve(image);
     cap >> image;
-    cv::imshow("Yolo example with Pycam", image);
     if (image.empty()) {
       cerr << "Error capturing image" << endl;
       break;
     }
-    vector<cv::Mat> input;
-    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
-    cv::resize(image, image, cv::Size(300, 300));
-    input.push_back(image);
 
-    TfLiteTensor* input_tensor_ptr = interpreter->tensor(interpreter->inputs()[0]);
-    int input_width = input_tensor_ptr->dims->data[2];
-    int input_height = input_tensor_ptr->dims->data[1];
-    int channels = input_tensor_ptr->dims->data[3];
-    int total_pixels = input_width * input_height * channels;
-
-    // (7) Push image to input tensor
-    if (tpu_mode) {
-      if (input_tensor_ptr->type == kTfLiteUInt8) {
-        uint8_t* input_tensor = interpreter->typed_input_tensor<uint8_t>(0);
-        std::memcpy(input_tensor, image.data, total_pixels);
-      } else if (input_tensor_ptr->type == kTfLiteInt8) {
-        int8_t* input_tensor = interpreter->typed_input_tensor<int8_t>(0);
-        for (int i = 0; i < total_pixels; ++i)
-            input_tensor[i] = (int8_t)((int)image.data[i] - 128); 
-      }
-    } else {
-      float* input_tensor = interpreter->typed_input_tensor<float>(0);
-      for (int i = 0; i < 416 * 416 * 3; ++i)
-      input_tensor[i] = (float) image.data[i] / 255.0f;
+    // Update shared frame for inference thread
+    {
+        std::lock_guard<std::mutex> lock(frame_mutex);
+        shared_frame = image.clone(); // Clone to avoid modification while UI thread uses it
+        new_frame_available = true;
     }
 
-    // (8) Run inference
-    TFLITE_MINIMAL_CHECK(interpreter->Invoke() == kTfLiteOk);
-    printf("\n\n=== Post-invoke Interpreter State ===\n");
-
-printf("\n=== Output Tensor Check ===\n");
-int num_outputs = interpreter->outputs().size();
-printf("Number of output tensors: %d\n", num_outputs);
-
-for (int i = 0; i < num_outputs; i++) {
-    TfLiteTensor* out_tensor = interpreter->tensor(interpreter->outputs()[i]);
-    printf("Output %d - Name: %s, Dims: [", i, out_tensor->name);
-    for (int d = 0; d < out_tensor->dims->size; d++) {
-        printf("%d ", out_tensor->dims->data[d]);
+    // (7) Get latest results and draw
+    std::vector<Detection> results_to_draw;
+    {
+        std::lock_guard<std::mutex> lock(results_mutex);
+        results_to_draw = shared_results;
     }
-    printf("]\n");
-}
-printf("===========================\n\n");
 
-    // (9) Output parsing
-    parse_and_visualize_postprocess(interpreter.get(), image); 
+    // 헤더에서 제공되는 시각화 함수 사용 (라벨 포함)
+    yolo_output_visualize(image, results_to_draw);
 
-    // (10) Output visualize
-    yolo_output_visualize(image);
+    cv::imshow("Yolo example with Pycam", image);
 
     char key = cv::waitKey(1);
     if (key == 'q') {
+        running = false;
         break;
     }
+  }
+
+  // (11) release
+  running = false;
+  if (inference_thread.joinable()) {
+      inference_thread.join();
   }
   // (11) release
   cap.release();
