@@ -95,55 +95,19 @@ bool setupEdgeTpu(tflite::Interpreter* interpreter) {
     return true;
 }
 
-void inference_thread_func(tflite::Interpreter* interpreter, bool tpu_mode) {
+void camera_thread_func(cv::VideoCapture* cap) {
     while (running) {
-        if (!new_frame_available) {
-            std::this_thread::yield();
+        cv::Mat image;
+        (*cap) >> image;
+        if (image.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
-        cv::Mat local_frame;
         {
             std::lock_guard<std::mutex> lock(frame_mutex);
-            local_frame = shared_frame.clone();
-            new_frame_available = false;
-        }
-
-        if (local_frame.empty()) continue;
-
-        // Preprocessing
-        TfLiteTensor* input_tensor_ptr = interpreter->tensor(interpreter->inputs()[0]);
-        int input_height = input_tensor_ptr->dims->data[1];
-        int input_width  = input_tensor_ptr->dims->data[2];
-        int channels     = input_tensor_ptr->dims->data[3];
-        int total_pixels = input_height * input_width * channels;
-
-        cv::Mat processed_image;
-        cv::cvtColor(local_frame, processed_image, cv::COLOR_BGR2RGB);
-        cv::resize(processed_image, processed_image, cv::Size(input_width, input_height)); 
-
-        if (tpu_mode) {
-            if (input_tensor_ptr->type == kTfLiteUInt8) {
-                uint8_t* input_tensor = interpreter->typed_input_tensor<uint8_t>(0);
-                std::memcpy(input_tensor, processed_image.data, total_pixels);
-            } else if (input_tensor_ptr->type == kTfLiteInt8) {
-                int8_t* input_tensor = interpreter->typed_input_tensor<int8_t>(0);
-                for (int i = 0; i < total_pixels; ++i)
-                    input_tensor[i] = (int8_t)((int)processed_image.data[i] - 128); 
-            }
-        } else {
-            float* input_tensor = interpreter->typed_input_tensor<float>(0);
-            for (int i = 0; i < total_pixels; ++i)
-                input_tensor[i] = (float)processed_image.data[i] / 255.0f;
-        }
-
-        // Run inference
-        if (interpreter->Invoke() == kTfLiteOk) {
-            // SSD-style parsing (4-tensor output: Boxes, Classes, Scores, Count)
-            auto detections = parse_detections_thread_safe(interpreter, local_frame.cols, local_frame.rows);
-            
-            std::lock_guard<std::mutex> lock(results_mutex);
-            shared_results = std::move(detections);
+            shared_frame = image.clone();
+            new_frame_available = true;
         }
     }
 }
@@ -210,36 +174,69 @@ int main(int argc, char* argv[]) {
     printf("\n");
   }
 
-  // (5.5) Start Inference Thread
-  std::thread inference_thread(inference_thread_func, interpreter.get(), tpu_mode);
+  // (5.5) Start Camera Thread (Capture only)
+  std::thread camera_thread(camera_thread_func, &cap);
 
-  while (true) {
-    // (6) Load image from Camera
-    cv::Mat image;
-    cap >> image;
-    if (image.empty()) {
-      cerr << "Error capturing image" << endl;
-      break;
+  while (running) {
+    if (!new_frame_available) {
+        std::this_thread::yield();
+        continue;
     }
 
-    // Update shared frame for inference thread
+    cv::Mat image;
     {
         std::lock_guard<std::mutex> lock(frame_mutex);
-        shared_frame = image.clone(); // Clone to avoid modification while UI thread uses it
-        new_frame_available = true;
+        image = shared_frame.clone();
+        new_frame_available = false;
     }
 
-    // (7) Get latest results and draw
-    std::vector<Detection> results_to_draw;
-    {
-        std::lock_guard<std::mutex> lock(results_mutex);
-        results_to_draw = shared_results;
+    if (image.empty()) continue;
+
+    // (6) Preprocessing
+    TfLiteTensor* input_tensor_ptr = interpreter->tensor(interpreter->inputs()[0]);
+    int input_height = input_tensor_ptr->dims->data[1];
+    int input_width  = input_tensor_ptr->dims->data[2];
+    int channels     = input_tensor_ptr->dims->data[3];
+    int total_pixels = input_height * input_width * channels;
+
+    cv::Mat processed_image;
+    cv::cvtColor(image, processed_image, cv::COLOR_BGR2RGB);
+    cv::resize(processed_image, processed_image, cv::Size(input_width, input_height)); 
+
+    if (tpu_mode) {
+        if (input_tensor_ptr->type == kTfLiteUInt8) {
+            uint8_t* input_tensor = interpreter->typed_input_tensor<uint8_t>(0);
+            std::memcpy(input_tensor, processed_image.data, total_pixels);
+        } else if (input_tensor_ptr->type == kTfLiteInt8) {
+            int8_t* input_tensor = interpreter->typed_input_tensor<int8_t>(0);
+            for (int i = 0; i < total_pixels; ++i)
+                input_tensor[i] = (int8_t)((int)processed_image.data[i] - 128); 
+        }
+    } else {
+        float* input_tensor = interpreter->typed_input_tensor<float>(0);
+        for (int i = 0; i < total_pixels; ++i)
+            input_tensor[i] = (float)processed_image.data[i] / 255.0f;
     }
 
-    // 헤더에서 제공되는 시각화 함수 사용 (라벨 포함)
-    yolo_output_visualize(image, results_to_draw);
+    // (7) Run inference
+    auto start_time = std::chrono::high_resolution_clock::now();
+    if (interpreter->Invoke() == kTfLiteOk) {
+        auto end_time = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double, std::milli> inference_time = end_time - start_time;
+        printf("\rInference Latency: %.2f ms", inference_time.count());
+        fflush(stdout);
 
-    cv::imshow("Yolo example with Pycam", image);
+        // (8) Parsing
+        auto detections = parse_detections_thread_safe(interpreter, image.cols, image.rows);
+        
+        // (9) Visualization (Directly on the captured image)
+        yolo_output_visualize(image, detections);
+    }
+
+    // (10) Display (Fixed to 300x300)
+    cv::Mat display_image;
+    cv::resize(image, display_image, cv::Size(300, 300));
+    cv::imshow("Yolo example with Pycam", display_image);
 
     char key = cv::waitKey(1);
     if (key == 'q') {
@@ -250,8 +247,8 @@ int main(int argc, char* argv[]) {
 
   // (11) release
   running = false;
-  if (inference_thread.joinable()) {
-      inference_thread.join();
+  if (camera_thread.joinable()) {
+      camera_thread.join();
   }
   // (11) release
   cap.release();
