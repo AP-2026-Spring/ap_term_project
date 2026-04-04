@@ -198,6 +198,22 @@ int main(int argc, char* argv[]) {
   TFLITE_MINIMAL_CHECK(interpreter->AllocateTensors() == kTfLiteOk);
   printf("=== Pre-invoke Interpreter State ===\n");
 
+  // Print Input Tensor Info
+  for (int i = 0; i < interpreter->inputs().size(); i++) {
+    TfLiteTensor* t = interpreter->tensor(interpreter->inputs()[i]);
+    printf("Input [%d]: %s, Type: %d, Dims: ", i, t->name, t->type);
+    for (int d = 0; d < t->dims->size; d++) printf("%d ", t->dims->data[d]);
+    printf("\n");
+  }
+
+  // Print Output Tensor Info
+  for (int i = 0; i < interpreter->outputs().size(); i++) {
+    TfLiteTensor* t = interpreter->tensor(interpreter->outputs()[i]);
+    printf("Output [%d]: %s, Type: %d, Dims: ", i, t->name, t->type);
+    for (int d = 0; d < t->dims->size; d++) printf("%d ", t->dims->data[d]);
+    printf("\n");
+  }
+
   // (5.5) Start Inference Thread
   std::thread inference_thread(inference_thread_func, interpreter.get(), tpu_mode);
 
