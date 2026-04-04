@@ -72,9 +72,9 @@ std::condition_variable     output_cv;      // 메인 스레드 대기 알림용
 
 // ── [3] 카메라 활성화 플래그 ────────────────────────────────────────────────
 // camera_active_flags[i]: i번 카메라의 On(true) / Off(false) 상태
-// std::vector<std::atomic<bool>>은 복사 불가이므로 unique_ptr 배열로 관리
-static constexpr int NUM_CAMERAS = 2;
-std::unique_ptr<std::atomic<bool>> camera_active_flags[NUM_CAMERAS];
+// atomic<bool>은 복사 불가이므로 unique_ptr 을 vector 로 관리
+// ※ NUM_CAMERAS 는 런타임에 자동 감지 (하드코딩 없음)
+std::vector<std::unique_ptr<std::atomic<bool>>> camera_active_flags;
 
 std::atomic<bool> running{true};
 
@@ -156,8 +156,8 @@ void camera_status_polling_func() {
                     continue;
                 }
 
-                if (cam_id < 0 || cam_id >= NUM_CAMERAS) continue;
-                if (state != 0 && state != 1)             continue;
+                if (cam_id < 0 || cam_id >= (int)camera_active_flags.size()) continue;
+                if (state != 0 && state != 1)                                 continue;
 
                 bool new_active = (state == 1);
                 bool old_active = camera_active_flags[cam_id]->load();
@@ -185,6 +185,7 @@ void camera_status_polling_func() {
 //  · 캡처 성공 시 resize → cvtColor → input_queue.push
 void camera_thread_func(cv::VideoCapture* cap, int camera_id,
                         int input_width, int input_height) {
+    int retry_count = 0;  // 이 스레드 전용 재연결 시도 횟수
     while (running) {
         bool is_active = camera_active_flags[camera_id]->load();
 
@@ -201,16 +202,27 @@ void camera_thread_func(cv::VideoCapture* cap, int camera_id,
             continue;
         }
 
-        // ON 상태인데 카메라가 닫혀 있으면 재연결 시도
+        // ON 상태인데 카메라가 닫혀 있으면 재연결 시도 (최대 5회)
+        // retry_count 는 이 스레드 전용 로컬 변수 (thread-safe, 배열 불필요)
         if (!cap->isOpened()) {
-            printf("[cam %d] trying to open (ON)...\n", camera_id);
+            printf("[cam %d] trying to open (ON)... [%d/5]\n",
+                   camera_id, retry_count + 1);
             fflush(stdout);
             if (!cap->open(camera_id)) {
-                fprintf(stderr, "[cam %d] open failed, retrying in 500ms\n",
-                        camera_id);
+                ++retry_count;
+                fprintf(stderr, "[cam %d] open failed (retry %d/5)\n",
+                        camera_id, retry_count);
+                if (retry_count >= 5) {
+                    // 5회 연속 실패 → 자동으로 OFF 처리
+                    fprintf(stderr, "[cam %d] max retries reached. auto-disabling.\n",
+                            camera_id);
+                    camera_active_flags[camera_id]->store(false);
+                    retry_count = 0;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 continue;   // 재시도
             }
+            retry_count = 0;  // 성공 시 초기화
             printf("[cam %d] opened successfully (ON)\n", camera_id);
             fflush(stdout);
         }
@@ -331,24 +343,44 @@ int main(int argc, char* argv[]) {
     const char* filename = argv[1];
     bool use_tpu = std::stoi(argv[2]);
 
-    // ── [3] camera_active_flags 초기화 (기본값 true = ON) ────────────────────
-    for (int i = 0; i < NUM_CAMERAS; ++i) {
-        camera_active_flags[i] =
-            std::unique_ptr<std::atomic<bool>>(new std::atomic<bool>(true));
+    // ── (1) 런타임 카메라 자동 감지 ──────────────────────────────────────────
+    // /dev/video0 ~ video7 을 순서대로 열어보고 성공한 것만 등록
+    // capture device 인지 확인 (메타 장치 /dev/video1 등 필터링)
+    static constexpr int MAX_PROBE_INDEX = 8;
+    std::vector<int>              cam_indices;   // 실제 사용 가능한 인덱스
+    std::vector<cv::VideoCapture> caps;          // 대응하는 VideoCapture 객체
+
+    printf("[init] Probing cameras (index 0 ~ %d)...\n", MAX_PROBE_INDEX - 1);
+    for (int idx = 0; idx < MAX_PROBE_INDEX; ++idx) {
+        cv::VideoCapture probe(idx);
+        if (!probe.isOpened()) continue;
+
+        // 실제 프레임을 한 장 읽어서 진짜 캡처 장치인지 확인
+        cv::Mat test_frame;
+        probe >> test_frame;
+        if (test_frame.empty()) {
+            probe.release();
+            continue;
+        }
+        probe.release();
+
+        int cam_id = (int)cam_indices.size();
+        cam_indices.push_back(idx);
+        caps.emplace_back(idx);    // 실제 사용할 VideoCapture 재오픈
+        printf("[init] Camera %d detected at /dev/video%d\n", cam_id, idx);
     }
 
-    // ── (1) 멀티 카메라 열기 (index 0, index 2) ───────────────────────────────
-    const int cam_indices[NUM_CAMERAS] = {0, 2};
+    const int NUM_CAMERAS = (int)cam_indices.size();
+    if (NUM_CAMERAS == 0) {
+        fprintf(stderr, "Error: No usable camera found.\n");
+        return 1;
+    }
+    printf("[init] Total %d camera(s) available.\n", NUM_CAMERAS);
 
-    cv::VideoCapture caps[NUM_CAMERAS];
+    // ── [3] camera_active_flags 초기화 (기본값 true = ON) ────────────────────
     for (int i = 0; i < NUM_CAMERAS; ++i) {
-        caps[i].open(cam_indices[i]);
-        if (!caps[i].isOpened()) {
-            fprintf(stderr, "Warning: cannot open camera index %d (will retry in thread)\n",
-                    cam_indices[i]);
-        } else {
-            printf("Camera %d (index %d) opened.\n", i, cam_indices[i]);
-        }
+        camera_active_flags.emplace_back(
+            new std::atomic<bool>(true));
     }
 
     // ── (2) Load model ────────────────────────────────────────────────────────
@@ -467,8 +499,8 @@ int main(int argc, char* argv[]) {
     }
     if (inference_thread.joinable()) inference_thread.join();
 
-    for (int i = 0; i < NUM_CAMERAS; ++i) {
-        caps[i].release();
+    for (auto& cap : caps) {
+        cap.release();
     }
     cv::destroyAllWindows();
     return 0;
