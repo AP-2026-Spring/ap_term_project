@@ -227,7 +227,7 @@ int main(int argc, char* argv[]) {
         fflush(stdout);
 
         // (8) Parsing
-        auto detections = parse_detections_thread_safe(interpreter, image.cols, image.rows);
+        auto detections = parse_detections_thread_safe(interpreter.get(), image.cols, image.rows);
         
         // (9) Visualization (Directly on the captured image)
         yolo_output_visualize(image, detections);
