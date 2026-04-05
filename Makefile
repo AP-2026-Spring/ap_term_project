@@ -17,6 +17,7 @@ LDFLAGS := -pthread \
            -lopencv_objdetect \
            -lopencv_imgcodecs \
            -lopencv_videoio \
+           -lopencv_dnn \
            -l:libedgetpu.so.1.0 \
            -ldl
 
