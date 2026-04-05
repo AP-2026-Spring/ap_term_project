@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 #include "tensorflow/lite/interpreter.h"
+#include <opencv2/opencv.hpp>
+#include <opencv2/dnn.hpp>
 
 // Thread-safe detection result structure
 struct Detection {
@@ -15,7 +17,67 @@ struct Detection {
 inline std::vector<Detection> parse_detections_thread_safe(tflite::Interpreter* interpreter, int img_width, int img_height) {
     std::vector<Detection> detections;
     
-    // Check if enough outputs exist
+    // Check if the model is YOLOv8 INT8 with a single output tensor
+    if (interpreter->outputs().size() == 1) {
+        TfLiteTensor* output = interpreter->tensor(interpreter->outputs()[0]);
+        if (output->type == kTfLiteInt8 && output->dims->size == 3) {
+            int8_t* data = output->data.int8;
+            float scale = output->params.scale;
+            int zero_point = output->params.zero_point;
+            
+            int num_channels = output->dims->data[1]; // e.g., 6 (4 bbox + 2 classes)
+            int num_anchors = output->dims->data[2];  // e.g., 2100
+            
+            std::vector<cv::Rect> boxes;
+            std::vector<float> scores;
+            std::vector<int> class_ids;
+            
+            for (int i = 0; i < num_anchors; ++i) {
+                float max_score = -1.0f;
+                int max_class = -1;
+                // Find class with the maximum confidence score
+                for (int c = 4; c < num_channels; ++c) {
+                    float score = (data[c * num_anchors + i] - zero_point) * scale;
+                    if (score > max_score) {
+                        max_score = score;
+                        max_class = c - 4;
+                    }
+                }
+                
+                if (max_score >= 0.25f) {
+                    // Extract absolute box coordinates from the first 4 channels
+                    float cx = (data[0 * num_anchors + i] - zero_point) * scale;
+                    float cy = (data[1 * num_anchors + i] - zero_point) * scale;
+                    float w = (data[2 * num_anchors + i] - zero_point) * scale;
+                    float h = (data[3 * num_anchors + i] - zero_point) * scale;
+                    
+                    float xmin = cx - w / 2.0f;
+                    float ymin = cy - h / 2.0f;
+                    
+                    int xmin_i = std::max(0, (int)xmin);
+                    int ymin_i = std::max(0, (int)ymin);
+                    int xmax_i = std::min(img_width - 1, (int)(cx + w / 2.0f));
+                    int ymax_i = std::min(img_height - 1, (int)(cy + h / 2.0f));
+                    
+                    if (xmax_i > xmin_i && ymax_i > ymin_i) {
+                        boxes.push_back(cv::Rect(xmin_i, ymin_i, xmax_i - xmin_i, ymax_i - ymin_i));
+                        scores.push_back(max_score);
+                        class_ids.push_back(max_class);
+                    }
+                }
+            }
+            
+            std::vector<int> indices;
+            cv::dnn::NMSBoxes(boxes, scores, 0.25f, 0.45f, indices);
+            
+            for (int idx : indices) {
+                detections.push_back({class_ids[idx], scores[idx], boxes[idx]});
+            }
+            return detections;
+        }
+    }
+    
+    // Fallback for SSD-style models (4 output tensors)
     if (interpreter->outputs().size() < 4) return detections;
     
     // SSD-style models (regardless of name) often use the following 4 output tensors:
@@ -46,7 +108,7 @@ inline std::vector<Detection> parse_detections_thread_safe(tflite::Interpreter* 
 // Current COCO label dictionary
 inline std::map<int, std::string> get_coco_label_dict() {
     return {
-        {0, "person"},     {1, "bicycle"},   {2, "car"},          {3, "motorbike"},
+        {0, "cockroach"},     {1, "mouse"},   {2, "car"},          {3, "motorbike"},
         {4, "aeroplane"},  {5, "bus"},       {6, "train"},        {7, "truck"},
         {8, "boat"},       {9, "traffic_light"}, {10, "fire_hydrant"}, {11, "stop_sign"},
         {12, "parking_meter"}, {13, "bench"}, {14, "bird"},       {15, "cat"},
