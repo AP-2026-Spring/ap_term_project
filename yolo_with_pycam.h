@@ -32,6 +32,28 @@ inline std::vector<Detection> parse_detections_thread_safe(tflite::Interpreter* 
             std::vector<float> scores;
             std::vector<int> class_ids;
             
+            static bool debug_printed = false;
+            if (!debug_printed) {
+                printf("\n--- QUANTIZATION DEBUG ---\n");
+                printf("scale: %f, zero_point: %d\n", scale, zero_point);
+                float max_s = -1000.0f;
+                for (int idx = 0; idx < num_anchors; ++idx) {
+                    float s0 = (data[4 * num_anchors + idx] - zero_point) * scale;
+                    float s1 = (data[5 * num_anchors + idx] - zero_point) * scale;
+                    if (s0 > max_s) max_s = s0;
+                    if (s1 > max_s) max_s = s1;
+                }
+                printf("Global Max Score across all anchors: %f\n", max_s);
+                printf("First Anchor Raw: cx=%d, cy=%d, w=%d, h=%d, s0=%d, s1=%d\n", 
+                       data[0*num_anchors], data[1*num_anchors], data[2*num_anchors], data[3*num_anchors], data[4*num_anchors], data[5*num_anchors]);
+                printf("First Anchor Float: cx=%f, cy=%f, w=%f, h=%f, s0=%f, s1=%f\n",
+                       (data[0*num_anchors]-zero_point)*scale, (data[1*num_anchors]-zero_point)*scale, 
+                       (data[2*num_anchors]-zero_point)*scale, (data[3*num_anchors]-zero_point)*scale,
+                       (data[4*num_anchors]-zero_point)*scale, (data[5*num_anchors]-zero_point)*scale);
+                printf("-------------------------\n");
+                debug_printed = true;
+            }
+            
             for (int i = 0; i < num_anchors; ++i) {
                 float max_score = -1.0f;
                 int max_class = -1;
