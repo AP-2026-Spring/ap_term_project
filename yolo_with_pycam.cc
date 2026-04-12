@@ -100,10 +100,9 @@ int main(int argc, char* argv[]) {
     }
     printf("[init] Total %d camera(s) available.\n", num_cameras);
 
-    // ── (2) 카메라 활성화 플래그 및 입력 슬롯 초기화 ──────────────────────────
+    // ── (2) 카메라 활성화 플래그 초기화 (기본값 ON) ──────────────────────────
     for (int i = 0; i < num_cameras; ++i) {
         camera_active_flags.emplace_back(new std::atomic<bool>(true));
-        input_slots.emplace_back(new CameraSlot());
     }
 
     // ── (3) TFLite 모델 로드 & 인터프리터 빌드 ───────────────────────────────

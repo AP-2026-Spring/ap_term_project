@@ -64,14 +64,14 @@ void camera_thread_func(cv::VideoCapture* cap, int camera_id,
         cv::resize(raw_frame, processed, cv::Size(input_width, input_height));
         cv::cvtColor(processed, processed, cv::COLOR_BGR2RGB);
 
-        // input_slots[camera_id] 업데이트 (Latest-wins: 기존 프레임 덮어쓰기)
+        // input_queue 적재 (깊이 초과 시 가장 오래된 프레임 드롭)
         {
-            std::lock_guard<std::mutex> lock(input_slots[camera_id]->mtx);
-            input_slots[camera_id]->image = processed.clone();
-            input_slots[camera_id]->ready = true;
+            std::lock_guard<std::mutex> lock(input_mutex);
+            if (input_queue.size() >= INPUT_QUEUE_MAX) {
+                input_queue.pop();
+            }
+            input_queue.push({camera_id, processed.clone()});
         }
-        
-        // 추론 스레드에 새 프레임 도착 알림
-        input_cv.notify_all();
+        input_cv.notify_one();
     }
 }

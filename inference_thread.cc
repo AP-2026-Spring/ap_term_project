@@ -11,48 +11,20 @@
 //  condition_variable 로 input_queue 에 데이터가 생길 때까지 블록 (Spinlock 방지)
 //  → TFLite Invoke() → 박스 파싱 → output_queue.push → output_cv.notify
 void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
-    int last_cam_id = -1;
-    const int num_cameras = (int)input_slots.size();
-
     while (running) {
-        // ── input_slots 에서 최신 프레임 공정하게(Round-robin) 꺼내기 ──────────
-        FrameData frame_data; // 로직 유지를 위해 내부적으로 잠시 사용
-        bool found = false;
-
+        // ── input_queue 에서 FrameData 꺼내기 ──────────────────────────────
+        FrameData frame;
         {
-            std::unique_lock<std::mutex> lock(input_cv_mutex);
-            // 모든 슬롯을 확인해서 처리 대기 중인 프레임이 있는지 체크
-            auto check_ready = [&]() {
-                for (int i = 0; i < num_cameras; ++i) {
-                    int idx = (last_cam_id + 1 + i) % num_cameras;
-                    if (input_slots[idx]->ready) {
-                        last_cam_id = idx;
-                        return true;
-                    }
-                }
-                return false;
-            };
+            std::unique_lock<std::mutex> lock(input_mutex);
+            // 큐가 빌 때 최대 100ms 블록 대기 (Spinlock 방지)
+            input_cv.wait_for(lock, std::chrono::milliseconds(100),
+                              [] { return !input_queue.empty() || !running; });
 
-            if (!check_ready()) {
-                input_cv.wait_for(lock, std::chrono::milliseconds(100),
-                                  [&] { return check_ready() || !running; });
-            }
+            if (input_queue.empty()) continue;  // 타임아웃 또는 종료 신호
 
-            if (!running) break;
-
-            if (input_slots[last_cam_id]->ready) {
-                std::lock_guard<std::mutex> slot_lock(input_slots[last_cam_id]->mtx);
-                frame_data.camera_id = last_cam_id;
-                frame_data.image     = input_slots[last_cam_id]->image.clone();
-                input_slots[last_cam_id]->ready = false;
-                found = true;
-            }
+            frame = input_queue.front();
+            input_queue.pop();
         }
-
-        if (!found) continue;
-
-        // 원활한 컴파일을 위해 내부 변수명을 frame_data -> frame 으로 매칭
-        auto& frame = frame_data;
 
         // ── TFLite 입력 텐서에 데이터 복사 ──────────────────────────────────
         TfLiteTensor* input_tensor_ptr =
@@ -99,12 +71,7 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
             if (output_queue.size() >= OUTPUT_QUEUE_MAX) {
                 output_queue.pop();
             }
-            // aggregate initialization 대신 명시적 생성자 호출 (컴파일러 호환성)
-            DetectionResult res;
-            res.camera_id = frame.camera_id;
-            res.display_image = display.clone();
-            res.detections = detections;
-            output_queue.push(res);
+            output_queue.push({frame.camera_id, display.clone(), detections});
         }
         output_cv.notify_one();
     }
