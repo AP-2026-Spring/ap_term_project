@@ -1,9 +1,9 @@
 #include "shared_state.h"
 
 // ── 전역 변수 정의 ────────────────────────────────────────────────────────────
-std::queue<FrameData>       input_queue;
-std::mutex                  input_mutex;
-std::condition_variable     input_cv;
+std::vector<std::unique_ptr<CameraSlot>> input_slots;
+std::condition_variable                  input_cv;
+std::mutex                               input_cv_mutex;
 
 std::queue<DetectionResult> output_queue;
 std::mutex                  output_mutex;
