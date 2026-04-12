@@ -99,7 +99,12 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
             if (output_queue.size() >= OUTPUT_QUEUE_MAX) {
                 output_queue.pop();
             }
-            output_queue.push({frame.camera_id, display.clone(), detections});
+            // aggregate initialization 대신 명시적 생성자 호출 (컴파일러 호환성)
+            DetectionResult res;
+            res.camera_id = frame.camera_id;
+            res.display_image = display.clone();
+            res.detections = detections;
+            output_queue.push(res);
         }
         output_cv.notify_one();
     }

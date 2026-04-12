@@ -15,6 +15,12 @@ static constexpr size_t OUTPUT_QUEUE_MAX = 4;
 // ── 폴링 파일 경로 (RAM 디스크 - SD 카드 수명 보호) ──────────────────────────
 static constexpr const char* CAM_CMD_PATH = "/dev/shm/camera_cmd.txt";
 
+// ── 내부 통신용 구조체 ──────────────────────────────────────────────────────
+struct FrameData {
+    int     camera_id;
+    cv::Mat image;
+};
+
 // ── Producer → Consumer 전달 구조체 (Per-Camera Slot) ───────────────────────
 struct CameraSlot {
     cv::Mat image;
