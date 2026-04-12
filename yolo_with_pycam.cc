@@ -13,6 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 #include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <iostream>
 #include <thread>
@@ -67,6 +68,9 @@ int main(int argc, char* argv[]) {
     }
     const char* filename = argv[1];
     const bool  use_tpu  = std::stoi(argv[2]);
+
+    // Force DISPLAY to localhost:10.0 for X11 forwarding convenience
+    setenv("DISPLAY", "localhost:10.0", 1);
 
     // ── (1) 런타임 카메라 자동 감지 ──────────────────────────────────────────
     static constexpr int MAX_PROBE_INDEX = 8;
