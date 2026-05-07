@@ -4,7 +4,6 @@
 #include <cstdio>
 #include <thread>
 
-
 // ── Thread A (Producer): 카메라 캡처 & 전처리 & 하드웨어 On/Off 제어
 // ──────────
 //  · flag=false & cap.isOpened()  → cap.release()  (하드웨어 점유 해제)
@@ -36,13 +35,6 @@ void camera_thread_func(cv::VideoCapture *cap, int camera_id, int device_index,
              device_index, retry_count + 1);
       fflush(stdout);
 
-      // MJPG 및 해상도를 미리 설정하고 오픈 시도 (라즈베리파이 필수)
-      cap->set(cv::CAP_PROP_FOURCC,
-               cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
-      cap->set(cv::CAP_PROP_FRAME_WIDTH, 640);
-      cap->set(cv::CAP_PROP_FRAME_HEIGHT, 360);
-      cap->set(cv::CAP_PROP_FPS, 30);
-
       if (!cap->open(device_index)) {
         ++retry_count;
         fprintf(stderr, "[cam %d] open failed (retry %d/5)\n", camera_id,
@@ -56,6 +48,14 @@ void camera_thread_func(cv::VideoCapture *cap, int camera_id, int device_index,
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         continue;
       }
+
+      // 오픈에 성공하자마자 즉시 MJPG 및 해상도 설정
+      cap->set(cv::CAP_PROP_FOURCC,
+               cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
+      cap->set(cv::CAP_PROP_FRAME_WIDTH, 640);
+      cap->set(cv::CAP_PROP_FRAME_HEIGHT, 360);
+      cap->set(cv::CAP_PROP_FPS, 30);
+
       retry_count = 0;
       printf("[cam %d] opened successfully (ON)\n", camera_id);
       fflush(stdout);
