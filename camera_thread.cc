@@ -71,6 +71,13 @@ void camera_thread_func(cv::VideoCapture* cap, int camera_id,
             input_slots[camera_id]->ready = true;
         }
         
+        // 화면 도배를 막기 위해 스레드별로 10프레임마다 한 번씩만 출력
+        thread_local int frame_count = 0;
+        if (++frame_count % 10 == 0) {
+            printf("[DEBUG] Camera %d produced a frame! (total: %d)\n", camera_id, frame_count);
+            fflush(stdout);
+        }
+
         // 추론 스레드에 새 프레임 도착 알림
         input_cv.notify_all();
     }
