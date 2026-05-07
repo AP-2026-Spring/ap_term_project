@@ -25,7 +25,15 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
             auto check_ready = [&]() {
                 for (int i = 0; i < num_cameras; ++i) {
                     int idx = (last_cam_id + 1 + i) % num_cameras;
-                    if (input_slots[idx]->ready) {
+                    
+                    bool is_ready = false;
+                    {
+                        // ready 상태를 읽을 때도 반드시 해당 슬롯의 mutex를 잠가야 최신 값을 보장받음
+                        std::lock_guard<std::mutex> slot_lock(input_slots[idx]->mtx);
+                        is_ready = input_slots[idx]->ready;
+                    }
+
+                    if (is_ready) {
                         last_cam_id = idx;
                         return true;
                     }
@@ -40,12 +48,16 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
 
             if (!running) break;
 
-            if (input_slots[last_cam_id]->ready) {
+            // 데이터를 가져올 때도 lock을 먼저 걸고 ready 상태를 재확인
+            // (초기 last_cam_id가 -1일 때의 Out-of-bounds 방지 포함)
+            if (last_cam_id >= 0) {
                 std::lock_guard<std::mutex> slot_lock(input_slots[last_cam_id]->mtx);
-                frame.camera_id = last_cam_id;
-                frame.image     = input_slots[last_cam_id]->image.clone();
-                input_slots[last_cam_id]->ready = false;
-                found = true;
+                if (input_slots[last_cam_id]->ready) {
+                    frame.camera_id = last_cam_id;
+                    frame.image     = input_slots[last_cam_id]->image.clone();
+                    input_slots[last_cam_id]->ready = false;
+                    found = true;
+                }
             }
         }
 
