@@ -35,7 +35,15 @@ void camera_thread_func(cv::VideoCapture *cap, int camera_id, int device_index,
              device_index, retry_count + 1);
       fflush(stdout);
 
-      if (!cap->open(device_index)) {
+      // OpenCV 4+ API: 오픈하는 순간에 MJPG 속성을 함께 전달하여 YUYV 대역폭 폭주를 원천 차단
+      std::vector<int> params = {
+          cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
+          cv::CAP_PROP_FRAME_WIDTH, 640,
+          cv::CAP_PROP_FRAME_HEIGHT, 360,
+          cv::CAP_PROP_FPS, 30
+      };
+
+      if (!cap->open(device_index, cv::CAP_V4L2, params)) {
         ++retry_count;
         fprintf(stderr, "[cam %d] open failed (retry %d/5)\n", camera_id,
                 retry_count);
@@ -48,13 +56,6 @@ void camera_thread_func(cv::VideoCapture *cap, int camera_id, int device_index,
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         continue;
       }
-
-      // 오픈에 성공하자마자 즉시 MJPG 및 해상도 설정
-      cap->set(cv::CAP_PROP_FOURCC,
-               cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
-      cap->set(cv::CAP_PROP_FRAME_WIDTH, 640);
-      cap->set(cv::CAP_PROP_FRAME_HEIGHT, 360);
-      cap->set(cv::CAP_PROP_FPS, 30);
 
       retry_count = 0;
       printf("[cam %d] opened successfully (ON)\n", camera_id);

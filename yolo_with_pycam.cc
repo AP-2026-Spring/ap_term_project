@@ -98,16 +98,14 @@ int main(int argc, char *argv[]) {
            (int)cam_indices.size(), idx);
     cam_indices.push_back(idx);
 
-    caps.emplace_back(idx);
-
-    // 1. 비압축(YUYV) 대신 하드웨어 압축(MJPG) 사용
-    caps.back().set(cv::CAP_PROP_FOURCC,
-                    cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
-
-    // 2. 해상도와 프레임 강제 고정
-    caps.back().set(cv::CAP_PROP_FRAME_WIDTH, 320);
-    caps.back().set(cv::CAP_PROP_FRAME_HEIGHT, 320);
-    caps.back().set(cv::CAP_PROP_FPS, 30);
+    caps.emplace_back();
+    std::vector<int> params = {
+        cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'),
+        cv::CAP_PROP_FRAME_WIDTH, 640,
+        cv::CAP_PROP_FRAME_HEIGHT, 360,
+        cv::CAP_PROP_FPS, 30
+    };
+    caps.back().open(idx, cv::CAP_V4L2, params);
   }
 
   const int num_cameras = (int)cam_indices.size();
