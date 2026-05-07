@@ -9,7 +9,7 @@
 //  · flag=true  & !cap.isOpened() → cap.open()     (하드웨어 재연결, 최대 5회)
 //  · Off 상태 동안 100ms Idle (CPU 소모 방지)
 //  · 캡처 성공 시: resize → cvtColor(BGR→RGB) → input_queue.push → input_cv.notify
-void camera_thread_func(cv::VideoCapture* cap, int camera_id,
+void camera_thread_func(cv::VideoCapture* cap, int camera_id, int device_index,
                         int input_width, int input_height) {
     int retry_count = 0;  // 이 스레드 전용 재연결 시도 횟수 (thread-safe)
 
@@ -29,11 +29,17 @@ void camera_thread_func(cv::VideoCapture* cap, int camera_id,
 
         // ON 상태인데 카메라가 닫혀 있으면 재연결 시도 (최대 5회)
         if (!cap->isOpened()) {
-            printf("[cam %d] trying to open (ON)... [%d/5]\n",
-                   camera_id, retry_count + 1);
+            printf("[cam %d] trying to open /dev/video%d (ON)... [%d/5]\n",
+                   camera_id, device_index, retry_count + 1);
             fflush(stdout);
 
-            if (!cap->open(camera_id)) {
+            // MJPG 및 해상도를 미리 설정하고 오픈 시도 (라즈베리파이 필수)
+            cap->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
+            cap->set(cv::CAP_PROP_FRAME_WIDTH, 320);
+            cap->set(cv::CAP_PROP_FRAME_HEIGHT, 320);
+            cap->set(cv::CAP_PROP_FPS, 30);
+
+            if (!cap->open(device_index)) {
                 ++retry_count;
                 fprintf(stderr, "[cam %d] open failed (retry %d/5)\n",
                         camera_id, retry_count);

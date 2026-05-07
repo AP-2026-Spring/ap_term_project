@@ -169,8 +169,8 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::thread> camera_threads;
   for (int i = 0; i < num_cameras; ++i) {
-    camera_threads.emplace_back(camera_thread_func, &caps[i], i, input_width,
-                                input_height);
+    camera_threads.emplace_back(camera_thread_func, &caps[i], i, cam_indices[i],
+                                input_width, input_height);
   }
 
   std::thread inference_thread(inference_thread_func, interpreter.get(),
