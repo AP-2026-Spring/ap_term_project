@@ -146,14 +146,14 @@ int main(int argc, char *argv[]) {
     printf("Input [%d]: %s  Type: %d  Dims:", i, t->name, t->type);
     for (int d = 0; d < t->dims->size; ++d)
       printf(" %d", t->dims->data[d]);
-    printf("\n");
+    printf("  Scale: %f, ZP: %d\n", t->params.scale, t->params.zero_point);
   }
   for (int i = 0; i < (int)interpreter->outputs().size(); ++i) {
     TfLiteTensor *t = interpreter->tensor(interpreter->outputs()[i]);
     printf("Output[%d]: %s  Type: %d  Dims:", i, t->name, t->type);
     for (int d = 0; d < t->dims->size; ++d)
       printf(" %d", t->dims->data[d]);
-    printf("\n");
+    printf("  Scale: %f, ZP: %d\n", t->params.scale, t->params.zero_point);
   }
 
   TfLiteTensor *in = interpreter->tensor(interpreter->inputs()[0]);

@@ -69,9 +69,16 @@ void camera_thread_func(cv::VideoCapture *cap, int camera_id, int device_index,
       continue;
     }
 
-    // 전처리: resize → BGR→RGB 변환 (mutex 밖에서 수행 → 임계 구역 최소화)
+    // 전처리: Center Crop (1:1) → resize → BGR→RGB 변환
+    int width = raw_frame.cols;
+    int height = raw_frame.rows;
+    int size = std::min(width, height);
+    int x = (width - size) / 2;
+    int y = (height - size) / 2;
+
+    cv::Mat cropped = raw_frame(cv::Rect(x, y, size, size));
     cv::Mat processed;
-    cv::resize(raw_frame, processed, cv::Size(input_width, input_height));
+    cv::resize(cropped, processed, cv::Size(input_width, input_height));
     cv::cvtColor(processed, processed, cv::COLOR_BGR2RGB);
 
     // input_slots[camera_id] 업데이트 (Latest-wins: 기존 프레임 덮어쓰기)
