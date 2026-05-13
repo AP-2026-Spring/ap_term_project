@@ -73,8 +73,14 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
                 std::memcpy(dst, frame.image.data, total_pixels);
             } else if (input_tensor_ptr->type == kTfLiteInt8) {
                 int8_t* dst = interpreter->typed_input_tensor<int8_t>(0);
-                for (int i = 0; i < total_pixels; ++i)
-                    dst[i] = (int8_t)((int)frame.image.data[i] - 128);
+                float in_scale = input_tensor_ptr->params.scale;
+                int in_zp = input_tensor_ptr->params.zero_point;
+                
+                for (int i = 0; i < total_pixels; ++i) {
+                    // [0~255] -> [0~1] -> Quantized
+                    float normalized = (float)frame.image.data[i] / 255.0f;
+                    dst[i] = (int8_t)(normalized / in_scale + in_zp);
+                }
             }
         } else {
             float* dst = interpreter->typed_input_tensor<float>(0);
