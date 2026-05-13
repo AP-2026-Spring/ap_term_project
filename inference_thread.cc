@@ -98,6 +98,18 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
         auto detections = parse_detections_thread_safe(
             interpreter, frame.image.cols, frame.image.rows);
 
+        // 감지된 결과가 있으면 로그 출력
+        if (!detections.empty()) {
+            static std::map<int, std::string> labelDict = get_coco_label_dict();
+            printf("\n[cam %d] Detected: ", frame.camera_id);
+            for (const auto& det : detections) {
+                std::string name = labelDict.count(det.class_id) ? labelDict[det.class_id] : std::to_string(det.class_id);
+                printf("[%s: %.2f] ", name.c_str(), det.score);
+            }
+            printf("\n");
+            fflush(stdout);
+        }
+
         // 시각화용 BGR 이미지 생성 (RGB → BGR)
         cv::Mat display;
         cv::cvtColor(frame.image, display, cv::COLOR_RGB2BGR);
