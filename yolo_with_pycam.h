@@ -32,7 +32,6 @@ inline std::vector<Detection> parse_detections_thread_safe(tflite::Interpreter* 
             std::vector<float> scores;
             std::vector<int> class_ids;
             
-            float overall_max_score = 0.0f;
             for (int i = 0; i < num_anchors; ++i) {
                 float max_score = -1.0f;
                 int max_class = -1;
@@ -45,8 +44,6 @@ inline std::vector<Detection> parse_detections_thread_safe(tflite::Interpreter* 
                     }
                 }
                 
-                if (max_score > overall_max_score) overall_max_score = max_score;
-
                 if (max_score >= 0.25f) {
                     // Extract normalized box coordinates and scale them to image size
                     float cx = ((data[0 * num_anchors + i] - zero_point) * scale) * img_width;
@@ -70,11 +67,6 @@ inline std::vector<Detection> parse_detections_thread_safe(tflite::Interpreter* 
                 }
             }
             
-            if (overall_max_score > 0.01f) {
-                printf(" [MaxScore: %.4f] ", overall_max_score);
-                fflush(stdout);
-            }
-
             std::vector<int> indices;
             cv::dnn::NMSBoxes(boxes, scores, 0.25f, 0.45f, indices);
             
