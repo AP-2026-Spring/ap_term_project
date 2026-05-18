@@ -204,15 +204,27 @@ void websocket_client_func() {
                 delete[] payload;
 
                 // 단순 문자열 검색으로 JSON 파싱 대체
+                int target_idx = 0;
+                size_t id_pos = msg.find("\"camera_id\":");
+                if (id_pos != std::string::npos) {
+                    try {
+                        int parsed_id = std::stoi(msg.substr(id_pos + 12));
+                        target_idx = parsed_id - 1001; // Map 1001 -> 0, 1002 -> 1, etc.
+                        std::cout << "[WS] Parsed camera_id: " << parsed_id << " -> index: " << target_idx << "\n";
+                    } catch (...) {
+                        std::cerr << "[WS] Failed to parse camera_id from message: " << msg << "\n";
+                    }
+                }
+
                 if (msg.find("\"ON\"") != std::string::npos) {
-                    std::cout << "[WS] Received ON command -> Updating Hardware Status\n";
-                    if (!camera_active_flags.empty()) {
-                        camera_active_flags[0]->store(true);
+                    std::cout << "[WS] Received ON command for index: " << target_idx << "\n";
+                    if (target_idx >= 0 && target_idx < (int)camera_active_flags.size()) {
+                        camera_active_flags[target_idx]->store(true);
                     }
                 } else if (msg.find("\"OFF\"") != std::string::npos) {
-                    std::cout << "[WS] Received OFF command -> Updating Hardware Status\n";
-                    if (!camera_active_flags.empty()) {
-                        camera_active_flags[0]->store(false);
+                    std::cout << "[WS] Received OFF command for index: " << target_idx << "\n";
+                    if (target_idx >= 0 && target_idx < (int)camera_active_flags.size()) {
+                        camera_active_flags[target_idx]->store(false);
                     }
                 }
             }
