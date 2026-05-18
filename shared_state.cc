@@ -14,5 +14,5 @@ std::vector<std::unique_ptr<std::atomic<bool>>> camera_active_flags;
 std::atomic<bool> running{true};
 bool              tpu_mode = false;
 
-cv::Mat latest_display_frame;
+std::vector<cv::Mat> latest_display_frames;
 std::mutex latest_frame_mutex;

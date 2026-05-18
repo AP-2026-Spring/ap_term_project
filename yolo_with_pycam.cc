@@ -120,6 +120,7 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < num_cameras; ++i) {
     camera_active_flags.emplace_back(new std::atomic<bool>(true));
     input_slots.emplace_back(new CameraSlot());
+    latest_display_frames.emplace_back(); // 추가
   }
 
   // ── (3) TFLite 모델 로드 & 인터프리터 빌드 ───────────────────────────────
@@ -206,7 +207,9 @@ int main(int argc, char *argv[]) {
     // MJPEG 서버용 프레임 복사
     {
       std::lock_guard<std::mutex> lock(latest_frame_mutex);
-      latest_display_frame = result.display_image.clone();
+      if (result.camera_id >= 0 && result.camera_id < (int)latest_display_frames.size()) {
+        latest_display_frames[result.camera_id] = result.display_image.clone();
+      }
     }
 
     cv::Mat show;

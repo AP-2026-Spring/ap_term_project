@@ -1,6 +1,7 @@
 #include "web_thread.h"
 #include "shared_state.h"
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <cstring>
 #include <chrono>
@@ -65,7 +66,24 @@ void mjpeg_server_func() {
         int flags = fcntl(client_socket, F_GETFL, 0);
         fcntl(client_socket, F_SETFL, flags & ~O_NONBLOCK);
 
-        std::cout << "[MJPEG] Client connected!\n";
+        // HTTP GET Request 헤더 읽기 및 카메라 번호 파싱
+        char req_buf[1024] = {0};
+        int bytes_rec = recv(client_socket, req_buf, sizeof(req_buf) - 1, 0);
+        int target_cam = 0; // 디폴트: 0번 카메라
+        if (bytes_rec > 0) {
+            std::string request_str(req_buf);
+            size_t cam_param_pos = request_str.find("cam=");
+            if (cam_param_pos != std::string::npos) {
+                try {
+                    target_cam = std::stoi(request_str.substr(cam_param_pos + 4, 1));
+                    std::cout << "[MJPEG] Client requested camera index: " << target_cam << "\n";
+                } catch (...) {
+                    std::cerr << "[MJPEG] Failed to parse target camera index from request!\n";
+                }
+            }
+        }
+
+        std::cout << "[MJPEG] Client connected for camera " << target_cam << "!\n";
 
         const char* http_header = "HTTP/1.1 200 OK\r\n"
                                   "Cache-Control: no-cache, private\r\n"
@@ -77,8 +95,10 @@ void mjpeg_server_func() {
             cv::Mat frame_copy;
             {
                 std::lock_guard<std::mutex> lock(latest_frame_mutex);
-                if (!latest_display_frame.empty()) {
-                    frame_copy = latest_display_frame.clone();
+                if (target_cam >= 0 && target_cam < (int)latest_display_frames.size()) {
+                    if (!latest_display_frames[target_cam].empty()) {
+                        frame_copy = latest_display_frames[target_cam].clone();
+                    }
                 }
             }
 
@@ -226,6 +246,16 @@ void websocket_client_func() {
                     if (target_idx >= 0 && target_idx < (int)camera_active_flags.size()) {
                         camera_active_flags[target_idx]->store(false);
                     }
+                }
+
+                // Write the updated states back to /dev/shm/camera_cmd.txt so the polling thread is in sync!
+                std::ofstream cmd_file(CAM_CMD_PATH);
+                if (cmd_file.is_open()) {
+                    for (size_t i = 0; i < camera_active_flags.size(); ++i) {
+                        cmd_file << i << ":" << (camera_active_flags[i]->load() ? 1 : 0) << "\n";
+                    }
+                    cmd_file.close();
+                    std::cout << "[WS] Successfully synchronized /dev/shm/camera_cmd.txt with updated states!\n";
                 }
             }
         }
