@@ -52,3 +52,7 @@ extern std::vector<std::unique_ptr<std::atomic<bool>>> camera_active_flags;
 
 extern std::atomic<bool> running;
 extern bool              tpu_mode;
+
+// MJPEG 스트리밍 서버용 글로벌 프레임 저장소
+extern cv::Mat latest_display_frame;
+extern std::mutex latest_frame_mutex;

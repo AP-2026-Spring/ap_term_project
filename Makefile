@@ -25,7 +25,8 @@ SRCS := yolo_with_pycam.cc \
         shared_state.cc \
         camera_thread.cc \
         inference_thread.cc \
-        polling_thread.cc
+        polling_thread.cc \
+        web_thread.cc
 
 OBJS := $(SRCS:.cc=.o)
 EXEC := yolo_with_pycam

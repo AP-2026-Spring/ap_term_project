@@ -31,6 +31,7 @@ limitations under the License.
 #include "inference_thread.h"
 #include "polling_thread.h"
 #include "shared_state.h"
+#include "web_thread.h"
 
 
 #define TFLITE_MINIMAL_CHECK(x)                                                \
@@ -174,6 +175,10 @@ int main(int argc, char *argv[]) {
   std::thread inference_thread(inference_thread_func, interpreter.get(),
                                total_pixels);
 
+  // 웹 통신 스레드 시작
+  std::thread mjpeg_server_thread(mjpeg_server_func);
+  std::thread websocket_client_thread(websocket_client_func);
+
   // ── (7) 메인 스레드: 시각화 루프 ─────────────────────────────────────────
   while (running) {
     DetectionResult result;
@@ -197,6 +202,12 @@ int main(int argc, char *argv[]) {
     }
 
     yolo_output_visualize(result.display_image, result.detections);
+
+    // MJPEG 서버용 프레임 복사
+    {
+      std::lock_guard<std::mutex> lock(latest_frame_mutex);
+      latest_display_frame = result.display_image.clone();
+    }
 
     cv::Mat show;
     cv::resize(result.display_image, show, cv::Size(300, 300));
@@ -228,6 +239,10 @@ int main(int argc, char *argv[]) {
       t.join();
   if (inference_thread.joinable())
     inference_thread.join();
+  if (mjpeg_server_thread.joinable())
+    mjpeg_server_thread.join();
+  if (websocket_client_thread.joinable())
+    websocket_client_thread.join();
 
   for (auto &cap : caps)
     cap.release();
