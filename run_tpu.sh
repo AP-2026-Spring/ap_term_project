@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# .env 파일이 존재하면 읽어서 환경 변수로 적용
+# .env ?뚯씪??議댁옱?섎㈃ ?쎌뼱???섍꼍 蹂?섎줈 ?곸슜
 if [ -f .env ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
