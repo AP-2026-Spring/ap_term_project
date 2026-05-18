@@ -10,6 +10,8 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <netinet/in.h>
+#include <cstdlib>
+#include <string>
 
 // ── 1. MJPEG 스트리밍 서버 ──────────────────────────────────────────
 void mjpeg_server_func() {
@@ -101,8 +103,11 @@ void mjpeg_server_func() {
 
 // ── 2. 웹소켓 클라이언트 (간이 구현) ──────────────────────────────
 void websocket_client_func() {
-    const char* server_ip = "192.168.1.10";
-    int port = 8081;
+    const char* env_ip = std::getenv("WS_SERVER_IP");
+    const char* env_port = std::getenv("WS_SERVER_PORT");
+    
+    std::string server_ip = env_ip ? env_ip : "127.0.0.1";
+    int port = env_port ? std::stoi(env_port) : 8081;
 
     while (running) {
         int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -114,7 +119,7 @@ void websocket_client_func() {
         struct sockaddr_in serv_addr;
         serv_addr.sin_family = AF_INET;
         serv_addr.sin_port = htons(port);
-        if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0) {
+        if (inet_pton(AF_INET, server_ip.c_str(), &serv_addr.sin_addr) <= 0) {
             close(sock);
             std::this_thread::sleep_for(std::chrono::seconds(3));
             continue;
@@ -133,13 +138,14 @@ void websocket_client_func() {
         }
 
         // WebSocket Handshake 전송
-        const char* handshake = 
+        char handshake[512];
+        snprintf(handshake, sizeof(handshake),
             "GET /detection HTTP/1.1\r\n"
-            "Host: 192.168.1.10:8081\r\n"
+            "Host: %s:%d\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
             "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-            "Sec-WebSocket-Version: 13\r\n\r\n";
+            "Sec-WebSocket-Version: 13\r\n\r\n", server_ip.c_str(), port);
         
         send(sock, handshake, strlen(handshake), MSG_NOSIGNAL);
 
