@@ -63,6 +63,13 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
 
         if (!found) continue;
 
+        // 100% 확실히 꺼진 카메라에 대해서는 추론을 즉시 스킵하고 프레임 폐기
+        if (frame.camera_id >= 0 && frame.camera_id < (int)camera_active_flags.size()) {
+            if (!camera_active_flags[frame.camera_id]->load()) {
+                continue; // 추론 스킵
+            }
+        }
+
         // ── TFLite 입력 텐서에 데이터 복사 ──────────────────────────────────
         TfLiteTensor* input_tensor_ptr =
             interpreter->tensor(interpreter->inputs()[0]);
