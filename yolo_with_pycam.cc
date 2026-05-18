@@ -190,12 +190,6 @@ int main(int argc, char *argv[]) {
                          [] { return !output_queue.empty() || !running; });
 
       if (output_queue.empty()) {
-        if (getenv("DISPLAY")) {
-          if (cv::waitKey(1) == 'q') {
-            running = false;
-            break;
-          }
-        }
         continue;
       }
       result = output_queue.front();
@@ -210,23 +204,6 @@ int main(int argc, char *argv[]) {
       if (result.camera_id >= 0 && result.camera_id < (int)latest_display_frames.size()) {
         latest_display_frames[result.camera_id] = result.display_image.clone();
       }
-    }
-
-    cv::Mat show;
-    cv::resize(result.display_image, show, cv::Size(300, 300));
-    const std::string win = "Yolo cam " + std::to_string(result.camera_id);
-
-    if (getenv("DISPLAY")) {
-      try {
-        cv::imshow(win, show);
-      } catch (...) {
-      }
-      if (cv::waitKey(1) == 'q') {
-        running = false;
-        break;
-      }
-    } else {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
   }
 
