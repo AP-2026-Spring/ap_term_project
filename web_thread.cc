@@ -429,6 +429,29 @@ void websocket_client_func() {
           if (target_idx >= 0 && target_idx < (int)camera_active_flags.size()) {
             camera_active_flags[target_idx]->store(false);
           }
+        } else if (msg.find("\"targets\"") != std::string::npos || msg.find("\"type\":\"targets\"") != std::string::npos) {
+          bool mouse = true;
+          bool cockroach = true;
+
+          size_t mouse_pos = msg.find("\"mouse\":");
+          if (mouse_pos != std::string::npos) {
+            std::string sub = msg.substr(mouse_pos + 8);
+            mouse = (sub.find("true") == 0 || sub.find("1") == 0 || sub.find("true") < 5 || sub.find("1") < 5);
+          }
+
+          size_t cockroach_pos = msg.find("\"cockroach\":");
+          if (cockroach_pos != std::string::npos) {
+            std::string sub = msg.substr(cockroach_pos + 12);
+            cockroach = (sub.find("true") == 0 || sub.find("1") == 0 || sub.find("true") < 5 || sub.find("1") < 5);
+          }
+
+          std::cout << "[WS] Received targets command for camera " << (target_idx + 1001)
+                    << ": Mouse=" << (mouse ? "ON" : "OFF") << ", Cockroach=" << (cockroach ? "ON" : "OFF") << "\n";
+
+          if (target_idx >= 0 && target_idx < (int)detect_mouse_flags.size()) {
+            detect_mouse_flags[target_idx]->store(mouse);
+            detect_cockroach_flags[target_idx]->store(cockroach);
+          }
         }
 
         // Write the updated states back to /dev/shm/camera_cmd.txt so the
