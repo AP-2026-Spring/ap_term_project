@@ -117,6 +117,7 @@ void mjpeg_server_func() {
         }
         std::cout << "[MJPEG] Client disconnected.\n";
         close(client_socket);
+    }
     close(server_fd);
 }
 
