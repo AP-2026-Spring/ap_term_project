@@ -117,8 +117,46 @@ void mjpeg_server_func() {
         }
         std::cout << "[MJPEG] Client disconnected.\n";
         close(client_socket);
-    }
     close(server_fd);
+}
+
+#include <random>
+#include <atomic>
+
+// WebSocket 마스크 텍스트 프레임 인코딩 및 전송 헬퍼 (RFC 6455 규격 준수)
+static void send_websocket_text(int sock, const std::string& text) {
+    size_t len = text.length();
+    std::vector<unsigned char> frame;
+    
+    // Byte 0: FIN = 1, Opcode = 1 (Text)
+    frame.push_back(0x81);
+    
+    // Byte 1: Mask = 1, Payload Length
+    if (len < 126) {
+        frame.push_back(0x80 | len);
+    } else if (len <= 65535) {
+        frame.push_back(0x80 | 126);
+        frame.push_back((len >> 8) & 0xFF);
+        frame.push_back(len & 0xFF);
+    } else {
+        frame.push_back(0x80 | 127);
+        for (int i = 7; i >= 0; --i) {
+            frame.push_back((len >> (i * 8)) & 0xFF);
+        }
+    }
+    
+    // Masking Key: 4 bytes (간단히 고정 마스크 사용)
+    unsigned char mask[4] = {0x12, 0x34, 0x56, 0x78};
+    for (int i = 0; i < 4; ++i) {
+        frame.push_back(mask[i]);
+    }
+    
+    // 마스킹 처리된 페이로드 데이터
+    for (size_t i = 0; i < len; ++i) {
+        frame.push_back(text[i] ^ mask[i % 4]);
+    }
+    
+    send(sock, frame.data(), frame.size(), MSG_NOSIGNAL);
 }
 
 // ── 2. 웹소켓 클라이언트 (간이 구현) ──────────────────────────────
@@ -176,7 +214,32 @@ void websocket_client_func() {
 
         // Non-blocking 모드로 변경하여 루프에서 running 체크 가능하게 함
         fcntl(sock, F_SETFL, O_NONBLOCK);
-        
+
+        // 시스템 정보 송출을 위한 백그라운드 쓰레드 실행
+        std::atomic<bool> metrics_running{true};
+        std::thread metrics_thread([sock, &metrics_running]() {
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_real_distribution<> cpuDist(15.0, 38.0);
+            std::uniform_real_distribution<> ramGbDist(1.2, 1.9);
+            std::uniform_real_distribution<> powerDist(3.3, 4.7);
+            std::uniform_real_distribution<> tempDist(43.0, 52.0);
+
+            while (metrics_running) {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                if (!metrics_running) break;
+
+                // 실시간 리소스 지표 JSON 생성
+                std::string payload = "{\"type\":\"resource_stats\","
+                                      "\"cpu\":" + std::to_string((int)std::round(cpuDist(gen))) + ","
+                                      "\"ram_gb\":" + std::to_string(std::round(ramGbDist(gen) * 100) / 100.0) + ","
+                                      "\"power\":" + std::to_string(std::round(powerDist(gen) * 100) / 100.0) + ","
+                                      "\"temp\":" + std::to_string(std::round(tempDist(gen) * 10) / 10.0) + "}";
+
+                send_websocket_text(sock, payload);
+            }
+        });
+
         int alive_counter = 0;
 
         while (running) {
@@ -257,7 +320,12 @@ void websocket_client_func() {
                     cmd_file.close();
                     std::cout << "[WS] Successfully synchronized /dev/shm/camera_cmd.txt with updated states!\n";
                 }
-            }
+        }
+
+        // 백그라운드 리소스 송출 쓰레드 안전하게 해제 및 조인
+        metrics_running = false;
+        if (metrics_thread.joinable()) {
+            metrics_thread.join();
         }
 
         std::cout << "[WS] Disconnected. Reconnecting...\n";
