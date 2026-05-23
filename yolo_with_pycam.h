@@ -116,13 +116,17 @@ inline std::map<int, std::string> get_coco_label_dict() {
 inline void yolo_output_visualize(cv::Mat& image, const std::vector<Detection>& detections) {
     static std::map<int, std::string> labelDict = get_coco_label_dict();
     for (const auto& det : detections) {
-        cv::rectangle(image, det.box, cv::Scalar(0, 255, 0), 2);
+        // BGR Color: mouse (1) is Red (0, 0, 255), cockroach (0) is Green (0, 255, 0)
+        cv::Scalar color = (det.class_id == 1) ? cv::Scalar(0, 0, 255) : cv::Scalar(0, 255, 0);
+
+        cv::rectangle(image, det.box, color, 2);
 
         char label[256];
         std::string class_name = labelDict.count(det.class_id) ? labelDict[det.class_id] : std::to_string(det.class_id);
-        sprintf(label, "%s, Score: %.2f", class_name.c_str(), det.score);
+        std::string class_name_kr = (det.class_id == 1) ? "쥐" : ((det.class_id == 0) ? "바퀴벌레" : class_name);
+        sprintf(label, "%s, Score: %.2f", class_name_kr.c_str(), det.score);
         
         cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 3);
-        cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+        cv::putText(image, label, cv::Point(det.box.x, det.box.y - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, color, 1);
     }
 }
