@@ -10,8 +10,6 @@ std::mutex                  output_mutex;
 std::condition_variable     output_cv;
 
 std::vector<std::unique_ptr<std::atomic<bool>>> camera_active_flags;
-std::vector<std::unique_ptr<std::atomic<bool>>> detect_mouse_flags;
-std::vector<std::unique_ptr<std::atomic<bool>>> detect_cockroach_flags;
 
 std::atomic<bool> running{true};
 bool              tpu_mode = false;

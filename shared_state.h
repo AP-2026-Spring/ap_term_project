@@ -49,8 +49,6 @@ extern std::condition_variable     output_cv;
 // camera_active_flags[i]: i번 카메라 On(true)/Off(false) 상태
 // atomic<bool>은 복사 불가 → unique_ptr로 래핑하여 vector에 보관
 extern std::vector<std::unique_ptr<std::atomic<bool>>> camera_active_flags;
-extern std::vector<std::unique_ptr<std::atomic<bool>>> detect_mouse_flags;
-extern std::vector<std::unique_ptr<std::atomic<bool>>> detect_cockroach_flags;
 
 extern std::atomic<bool> running;
 extern bool              tpu_mode;

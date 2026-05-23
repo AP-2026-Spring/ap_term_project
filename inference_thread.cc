@@ -108,20 +108,6 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
         auto detections = parse_detections_thread_safe(
             interpreter, frame.image.cols, frame.image.rows);
 
-        // ── 탐지 대상 설정 필터링 ───────────────────────────────────────────
-        std::vector<Detection> filtered_detections;
-        if (frame.camera_id >= 0 && frame.camera_id < (int)detect_mouse_flags.size()) {
-            bool mouse_enabled = detect_mouse_flags[frame.camera_id]->load();
-            bool cockroach_enabled = detect_cockroach_flags[frame.camera_id]->load();
-            for (const auto& det : detections) {
-                if (det.class_id == 1 && !mouse_enabled) continue; // 쥐 필터링
-                if (det.class_id == 0 && !cockroach_enabled) continue; // 바퀴벌레 필터링
-                filtered_detections.push_back(det);
-            }
-        } else {
-            filtered_detections = detections;
-        }
-
         // 시각화용 BGR 이미지 생성 (RGB → BGR)
         cv::Mat display;
         cv::cvtColor(frame.image, display, cv::COLOR_RGB2BGR);
@@ -136,7 +122,7 @@ void inference_thread_func(tflite::Interpreter* interpreter, int total_pixels) {
             DetectionResult res;
             res.camera_id = frame.camera_id;
             res.display_image = display.clone();
-            res.detections = filtered_detections;
+            res.detections = detections;
             output_queue.push(res);
         }
         output_cv.notify_one();

@@ -119,8 +119,6 @@ int main(int argc, char *argv[]) {
   // ── (2) 카메라 활성화 플래그 및 입력 슬롯 초기화 ──────────────────────────
   for (int i = 0; i < num_cameras; ++i) {
     camera_active_flags.emplace_back(new std::atomic<bool>(true));
-    detect_mouse_flags.emplace_back(new std::atomic<bool>(true));
-    detect_cockroach_flags.emplace_back(new std::atomic<bool>(true));
     input_slots.emplace_back(new CameraSlot());
     latest_display_frames.emplace_back(); // 추가
   }
